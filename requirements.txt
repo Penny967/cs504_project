@@ -3,3 +3,4 @@ pyotp
 bcrypt
 qrcode
 pillow
+gunicorn
