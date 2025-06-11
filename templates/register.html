@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Create Account - MFA Demo</title>
+    <title>Create Account - Enhanced MFA Demo</title>
     <style>
         * {
             margin: 0;
@@ -51,6 +51,7 @@
 
         .form-group {
             margin-bottom: 20px;
+            position: relative;
         }
 
         .form-group label {
@@ -77,6 +78,35 @@
             box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
         }
 
+        .form-group input.valid {
+            border-color: #28a745;
+        }
+
+        .form-group input.invalid {
+            border-color: #dc3545;
+        }
+
+        .validation-icon {
+            position: absolute;
+            right: 12px;
+            top: 38px;
+            font-size: 16px;
+        }
+
+        .validation-message {
+            font-size: 12px;
+            margin-top: 5px;
+            transition: all 0.3s ease;
+        }
+
+        .validation-message.success {
+            color: #28a745;
+        }
+
+        .validation-message.error {
+            color: #dc3545;
+        }
+
         .btn {
             width: 100%;
             padding: 14px;
@@ -92,13 +122,18 @@
             overflow: hidden;
         }
 
-        .btn:hover {
+        .btn:hover:not(:disabled) {
             transform: translateY(-2px);
             box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
         }
 
         .btn:active {
             transform: translateY(0);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
         }
 
         .divider {
@@ -193,6 +228,19 @@
 
         .password-requirements li {
             margin-bottom: 3px;
+            position: relative;
+        }
+
+        .password-requirements li.valid::before {
+            content: "✅";
+            position: absolute;
+            left: -20px;
+        }
+
+        .password-requirements li.invalid::before {
+            content: "❌";
+            position: absolute;
+            left: -20px;
         }
 
         @media (max-width: 480px) {
@@ -235,23 +283,44 @@
             content: "🔒";
             margin-right: 4px;
         }
+
+        .progress-bar {
+            height: 4px;
+            background: #e1e5e9;
+            border-radius: 2px;
+            margin-top: 8px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #dc3545, #ffc107, #28a745);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .strength-text {
+            font-size: 12px;
+            margin-top: 5px;
+            font-weight: 500;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="logo">
             <h1>Create Account</h1>
-            <p>Setup Multi-Factor Authentication <span class="security-badge">Secure</span></p>
+            <p>Setup Multi-Factor Authentication <span class="security-badge">Enhanced Security</span></p>
         </div>
 
         <div class="setup-info">
-            <h3>MFA Setup Process</h3>
+            <h3>Enhanced MFA Setup Process</h3>
             <ul>
                 <li>Install Microsoft Authenticator on your phone</li>
-                <li>Create your account with username and password</li>
-                <li>Set a 4-digit PIN for additional security</li>
+                <li>Create account with username, email and strong password</li>
+                <li>Set a secure 4-digit PIN for additional protection</li>
                 <li>Scan QR code to add your account to Authenticator</li>
-                <li>You'll use all three factors to log in</li>
+                <li>Use all three factors (password + PIN + TOTP) to log in</li>
             </ul>
         </div>
 
@@ -265,31 +334,51 @@
             {% endif %}
         {% endwith %}
 
-        <form method="post">
+        <form method="post" id="registrationForm">
             <div class="form-group">
                 <label for="username">Username</label>
-                <input type="text" id="username" name="username" required>
+                <input type="text" id="username" name="username" required minlength="3" maxlength="50">
+                <div class="validation-icon" id="usernameIcon"></div>
+                <div class="validation-message" id="usernameMessage"></div>
+            </div>
+
+            <div class="form-group">
+                <label for="email">Email Address</label>
+                <input type="email" id="email" name="email" required>
+                <div class="validation-icon" id="emailIcon"></div>
+                <div class="validation-message" id="emailMessage"></div>
             </div>
 
             <div class="form-group">
                 <label for="password">Password</label>
-                <input type="password" id="password" name="password" required>
+                <input type="password" id="password" name="password" required minlength="8">
+                <div class="validation-icon" id="passwordIcon"></div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="passwordStrength"></div>
+                </div>
+                <div class="strength-text" id="strengthText"></div>
                 <div class="password-requirements">
                     <h4>Password Requirements:</h4>
-                    <ul>
-                        <li>At least 8 characters long</li>
-                        <li>Mix of letters, numbers, and symbols</li>
-                        <li>Avoid common passwords</li>
+                    <ul id="passwordRequirements">
+                        <li id="lengthReq">At least 8 characters long</li>
+                        <li id="upperReq">Contains uppercase letter</li>
+                        <li id="lowerReq">Contains lowercase letter</li>
+                        <li id="numberReq">Contains number</li>
+                        <li id="specialReq">Contains special character</li>
                     </ul>
                 </div>
             </div>
 
             <div class="form-group">
-                <label for="pin">4-Digit PIN</label>
-                <input type="text" id="pin" name="pin" maxlength="4" pattern="[0-9]{4}" required>
+                <label for="pin">4-Digit Security PIN</label>
+                <input type="text" id="pin" name="pin" maxlength="4" pattern="[0-9]{4}" required inputmode="numeric">
+                <div class="validation-icon" id="pinIcon"></div>
+                <div class="validation-message" id="pinMessage"></div>
             </div>
 
-            <button type="submit" class="btn">Create Account & Setup MFA</button>
+            <button type="submit" class="btn" id="submitBtn" disabled>
+                Create Account & Setup MFA
+            </button>
         </form>
 
         <div class="divider">
@@ -300,5 +389,195 @@
             <a href="/login">Sign In to Your Account</a>
         </div>
     </div>
+
+    <script>
+        // Email validation regex
+        const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+        
+        // Form validation state
+        let validationState = {
+            username: false,
+            email: false,
+            password: false,
+            pin: false
+        };
+
+        // Real-time validation functions
+        function validateUsername() {
+            const username = document.getElementById('username').value;
+            const icon = document.getElementById('usernameIcon');
+            const message = document.getElementById('usernameMessage');
+            const input = document.getElementById('username');
+
+            if (username.length < 3) {
+                input.className = 'invalid';
+                icon.textContent = '❌';
+                message.textContent = 'Username must be at least 3 characters long';
+                message.className = 'validation-message error';
+                validationState.username = false;
+            } else if (username.length > 50) {
+                input.className = 'invalid';
+                icon.textContent = '❌';
+                message.textContent = 'Username must be less than 50 characters';
+                message.className = 'validation-message error';
+                validationState.username = false;
+            } else if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+                input.className = 'invalid';
+                icon.textContent = '❌';
+                message.textContent = 'Username can only contain letters, numbers, and underscores';
+                message.className = 'validation-message error';
+                validationState.username = false;
+            } else {
+                input.className = 'valid';
+                icon.textContent = '✅';
+                message.textContent = 'Valid username';
+                message.className = 'validation-message success';
+                validationState.username = true;
+            }
+            updateSubmitButton();
+        }
+
+        function validateEmail() {
+            const email = document.getElementById('email').value;
+            const icon = document.getElementById('emailIcon');
+            const message = document.getElementById('emailMessage');
+            const input = document.getElementById('email');
+
+            if (!emailRegex.test(email)) {
+                input.className = 'invalid';
+                icon.textContent = '❌';
+                message.textContent = 'Please enter a valid email address';
+                message.className = 'validation-message error';
+                validationState.email = false;
+            } else {
+                input.className = 'valid';
+                icon.textContent = '✅';
+                message.textContent = 'Valid email address';
+                message.className = 'validation-message success';
+                validationState.email = true;
+            }
+            updateSubmitButton();
+        }
+
+        function validatePassword() {
+            const password = document.getElementById('password').value;
+            const icon = document.getElementById('passwordIcon');
+            const input = document.getElementById('password');
+            const strengthBar = document.getElementById('passwordStrength');
+            const strengthText = document.getElementById('strengthText');
+
+            // Check individual requirements
+            const requirements = {
+                length: password.length >= 8,
+                upper: /[A-Z]/.test(password),
+                lower: /[a-z]/.test(password),
+                number: /[0-9]/.test(password),
+                special: /[^A-Za-z0-9]/.test(password)
+            };
+
+            // Update requirement indicators
+            document.getElementById('lengthReq').className = requirements.length ? 'valid' : 'invalid';
+            document.getElementById('upperReq').className = requirements.upper ? 'valid' : 'invalid';
+            document.getElementById('lowerReq').className = requirements.lower ? 'valid' : 'invalid';
+            document.getElementById('numberReq').className = requirements.number ? 'valid' : 'invalid';
+            document.getElementById('specialReq').className = requirements.special ? 'valid' : 'invalid';
+
+            // Calculate strength score
+            const score = Object.values(requirements).filter(Boolean).length;
+            const strengthPercentage = (score / 5) * 100;
+            strengthBar.style.width = strengthPercentage + '%';
+
+            // Update strength text and validation
+            if (score < 3) {
+                input.className = 'invalid';
+                icon.textContent = '❌';
+                strengthText.textContent = 'Weak password';
+                strengthText.style.color = '#dc3545';
+                validationState.password = false;
+            } else if (score < 5) {
+                input.className = '';
+                icon.textContent = '⚠️';
+                strengthText.textContent = 'Medium strength password';
+                strengthText.style.color = '#ffc107';
+                validationState.password = true;
+            } else {
+                input.className = 'valid';
+                icon.textContent = '✅';
+                strengthText.textContent = 'Strong password';
+                strengthText.style.color = '#28a745';
+                validationState.password = true;
+            }
+            updateSubmitButton();
+        }
+
+        function validatePin() {
+            const pin = document.getElementById('pin').value;
+            const icon = document.getElementById('pinIcon');
+            const message = document.getElementById('pinMessage');
+            const input = document.getElementById('pin');
+
+            if (!/^\d{4}$/.test(pin)) {
+                input.className = 'invalid';
+                icon.textContent = '❌';
+                message.textContent = 'PIN must be exactly 4 digits';
+                message.className = 'validation-message error';
+                validationState.pin = false;
+            } else if (pin === '0000' || pin === '1234' || pin === '1111' || pin === '9999') {
+                input.className = 'invalid';
+                icon.textContent = '⚠️';
+                message.textContent = 'Please choose a more secure PIN';
+                message.className = 'validation-message error';
+                validationState.pin = false;
+            } else {
+                input.className = 'valid';
+                icon.textContent = '✅';
+                message.textContent = 'Valid PIN';
+                message.className = 'validation-message success';
+                validationState.pin = true;
+            }
+            updateSubmitButton();
+        }
+
+        function updateSubmitButton() {
+            const submitBtn = document.getElementById('submitBtn');
+            const allValid = Object.values(validationState).every(Boolean);
+            
+            submitBtn.disabled = !allValid;
+            if (allValid) {
+                submitBtn.style.opacity = '1';
+                submitBtn.style.cursor = 'pointer';
+            } else {
+                submitBtn.style.opacity = '0.6';
+                submitBtn.style.cursor = 'not-allowed';
+            }
+        }
+
+        // Add event listeners
+        document.getElementById('username').addEventListener('input', validateUsername);
+        document.getElementById('email').addEventListener('input', validateEmail);
+        document.getElementById('password').addEventListener('input', validatePassword);
+        document.getElementById('pin').addEventListener('input', validatePin);
+
+        // Form submission
+        document.getElementById('registrationForm').addEventListener('submit', function(e) {
+            // Final validation before submission
+            validateUsername();
+            validateEmail();
+            validatePassword();
+            validatePin();
+
+            if (!Object.values(validationState).every(Boolean)) {
+                e.preventDefault();
+                alert('Please fix all validation errors before submitting.');
+            }
+        });
+
+        // Prevent non-numeric input in PIN field
+        document.getElementById('pin').addEventListener('keypress', function(e) {
+            if (!/\d/.test(e.key) && !['Backspace', 'Delete', 'Tab', 'Enter'].includes(e.key)) {
+                e.preventDefault();
+            }
+        });
+    </script>
 </body>
 </html>
