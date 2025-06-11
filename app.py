@@ -12,32 +12,32 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "your-secret-key-here")
 DB_PATH = 'users.db'
 
-# 邮箱验证正则表达式
+# Email validation regex pattern
 EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 
 def validate_email(email):
-    """验证邮箱格式"""
+    """Validate email format using regex"""
     if not email:
         return False
     return EMAIL_REGEX.match(email) is not None
 
 def clean_input(text):
-    """清理用户输入"""
+    """Clean and sanitize user input"""
     if text:
         return text.strip()
     return text
 
 def get_db():
-    """获取数据库连接"""
+    """Get database connection with row factory"""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
 def initialize_database():
-    """初始化数据库"""
+    """Initialize database with required tables"""
     conn = sqlite3.connect(DB_PATH)
     
-    # 创建用户表
+    # Create users table
     conn.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,7 +53,7 @@ def initialize_database():
         )
     ''')
     
-    # 创建审计日志表
+    # Create audit log table
     conn.execute('''
         CREATE TABLE IF NOT EXISTS audit_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,7 +69,7 @@ def initialize_database():
     conn.close()
 
 def add_audit_log(user_id, action, ip_address, details=None):
-    """添加审计日志"""
+    """Add audit log entry for security tracking"""
     try:
         conn = get_db()
         conn.execute(
@@ -79,9 +79,9 @@ def add_audit_log(user_id, action, ip_address, details=None):
         conn.commit()
         conn.close()
     except Exception:
-        pass  # 静默处理日志错误，不影响主功能
+        pass  # Silent error handling to avoid breaking main functionality
 
-# 初始化数据库
+# Initialize database on startup
 initialize_database()
 
 @app.route("/")
@@ -96,41 +96,41 @@ def register():
         password = request.form.get("password")
         pin = request.form.get("pin")
         
-        # 基本验证
+        # Basic input validation
         if not username or not email or not password or not pin:
             flash("All fields are required.")
             return redirect(url_for("register"))
         
-        # 邮箱验证
+        # Email format validation
         if not validate_email(email):
             flash("Please enter a valid email address.")
             return redirect(url_for("register"))
         
-        # PIN验证
+        # PIN format validation (must be 4 digits)
         if not re.match(r'^\d{4}$', pin):
             flash("PIN must be exactly 4 digits.")
             return redirect(url_for("register"))
         
-        # 密码验证
+        # Password length validation
         if len(password) < 8:
             flash("Password must be at least 8 characters long.")
             return redirect(url_for("register"))
         
-        # 生成安全数据
+        # Generate secure authentication data
         totp_secret = pyotp.random_base32()
         password_hash = generate_password_hash(password)
         pin_hash = generate_password_hash(pin)
         
         conn = get_db()
         try:
-            # 使用参数化查询防止SQL注入，并正确获取lastrowid
+            # Use parameterized query to prevent SQL injection
             cursor = conn.execute(
                 "INSERT INTO users (username, email, password_hash, pin_hash, totp_secret) VALUES (?, ?, ?, ?, ?)",
                 (username, email, password_hash, pin_hash, totp_secret)
             )
             conn.commit()
             
-            # 正确获取新用户ID - 使用cursor.lastrowid而不是conn.lastrowid
+            # Get new user ID correctly using cursor.lastrowid
             user_id = cursor.lastrowid
             add_audit_log(user_id, 'USER_REGISTERED', request.remote_addr or '127.0.0.1')
             
@@ -149,7 +149,7 @@ def register():
         finally:
             conn.close()
         
-        # 生成QR码
+        # Generate QR code for TOTP setup
         try:
             uri = pyotp.TOTP(totp_secret).provisioning_uri(name=username, issuer_name="MFA-Demo")
             img = qrcode.make(uri)
@@ -172,39 +172,39 @@ def login():
         pin = request.form.get("pin")
         totp_code = request.form.get("totp")
         
-        # 验证所有字段都已填写
+        # Validate all required fields are provided
         if not all([username, password, pin, totp_code]):
             flash("All fields are required.")
             return redirect(url_for("login"))
         
         conn = get_db()
         try:
-            # 使用参数化查询防止SQL注入
+            # Use parameterized query to prevent SQL injection
             user = conn.execute(
                 "SELECT * FROM users WHERE username = ? AND is_active = 1",
                 (username,)
             ).fetchone()
             
             if user:
-                # 检查账户是否被锁定
+                # Check if account is locked due to failed attempts
                 if user["failed_login_attempts"] >= 5:
                     flash("Account temporarily locked due to too many failed attempts.")
                     add_audit_log(user["id"], 'LOGIN_BLOCKED', request.remote_addr or '127.0.0.1', "Account locked")
                     return redirect(url_for("login"))
                 
-                # 验证密码和PIN
+                # Verify password and PIN
                 password_valid = check_password_hash(user["password_hash"], password)
                 pin_valid = check_password_hash(user["pin_hash"], pin)
                 
                 if password_valid and pin_valid:
-                    # 验证TOTP代码
+                    # Verify TOTP code
                     totp = pyotp.TOTP(user["totp_secret"])
                     if totp.verify(totp_code):
-                        # 登录成功
+                        # Login successful
                         session["user"] = username
                         session["user_id"] = user["id"]
                         
-                        # 重置失败次数并更新最后登录时间
+                        # Reset failed attempts and update last login time
                         conn.execute(
                             "UPDATE users SET failed_login_attempts = 0, last_login = CURRENT_TIMESTAMP WHERE id = ?",
                             (user["id"],)
@@ -214,7 +214,7 @@ def login():
                         add_audit_log(user["id"], 'LOGIN_SUCCESS', request.remote_addr or '127.0.0.1')
                         return redirect(url_for("dashboard"))
                 
-                # 登录失败 - 增加失败次数
+                # Login failed - increment failed attempts counter
                 conn.execute(
                     "UPDATE users SET failed_login_attempts = failed_login_attempts + 1 WHERE id = ?",
                     (user["id"],)
@@ -222,7 +222,7 @@ def login():
                 conn.commit()
                 add_audit_log(user["id"], 'LOGIN_FAILED', request.remote_addr or '127.0.0.1')
             else:
-                # 未知用户
+                # Unknown user attempted login
                 add_audit_log(None, 'LOGIN_FAILED', request.remote_addr or '127.0.0.1', f"Unknown user: {username}")
         
         except Exception as e:
@@ -259,12 +259,12 @@ def admin():
     
     conn = get_db()
     try:
-        # 获取用户列表
+        # Get list of all users
         users = conn.execute(
             "SELECT id, username, email, created_at, last_login, is_active, failed_login_attempts FROM users ORDER BY id"
         ).fetchall()
         
-        # 获取审计日志（最近50条）
+        # Get audit logs (latest 50 entries)
         audit_logs = conn.execute(
             """SELECT al.*, u.username 
                FROM audit_log al 
@@ -280,7 +280,7 @@ def admin():
     finally:
         conn.close()
 
-# 简单的错误处理
+# Error handlers
 @app.errorhandler(404)
 def not_found(error):
     return redirect(url_for("login"))
