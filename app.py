@@ -107,5 +107,12 @@ def logout():
     flash("You have been logged out.")
     return redirect(url_for("login"))
 
+@app.route("/admin")
+def admin():
+    conn = get_db()
+    users = conn.execute("SELECT * FROM users").fetchall()
+    return render_template("admin.html", users=users)
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+

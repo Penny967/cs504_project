@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head>
+    <title>Admin - User List</title>
+</head>
+<body>
+    <h2>Registered Users</h2>
+    <table border="1">
+        <tr>
+            <th>ID</th>
+            <th>Username</th>
+            <th>Password Hash</th>
+            <th>PIN Hash</th>
+            <th>TOTP Secret</th>
+        </tr>
+        {% for user in users %}
+        <tr>
+            <td>{{ user.id }}</td>
+            <td>{{ user.username }}</td>
+            <td>{{ user.password_hash }}</td>
+            <td>{{ user.pin_hash }}</td>
+            <td>{{ user.totp_secret }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</body>
+</html>
