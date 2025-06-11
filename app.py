@@ -8,6 +8,7 @@ import re
 from flask import Flask, render_template, request, redirect, session, url_for, flash, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 import bleach
+import logging
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "default_secret")
