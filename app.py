@@ -12,6 +12,9 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "your-secret-key-here")
 DB_PATH = 'users.db'
 
+# Admin configuration - these usernames will have admin access
+ADMIN_USERS = ['admin', 'penny', 'administrator', 'root']  # Add your admin usernames here
+
 # Email validation regex pattern
 EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 
@@ -27,6 +30,10 @@ def clean_input(text):
         return text.strip()
     return text
 
+def is_admin_user(username):
+    """Check if user has admin privileges"""
+    return username and username.lower() in [admin.lower() for admin in ADMIN_USERS]
+
 def get_db():
     """Get database connection with row factory"""
     conn = sqlite3.connect(DB_PATH)
@@ -37,7 +44,7 @@ def initialize_database():
     """Initialize database with required tables"""
     conn = sqlite3.connect(DB_PATH)
     
-    # Create users table
+    # Create users table with admin role
     conn.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,6 +56,7 @@ def initialize_database():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             last_login TIMESTAMP,
             is_active BOOLEAN DEFAULT 1,
+            is_admin BOOLEAN DEFAULT 0,
             failed_login_attempts INTEGER DEFAULT 0
         )
     ''')
@@ -121,18 +129,22 @@ def register():
         password_hash = generate_password_hash(password)
         pin_hash = generate_password_hash(pin)
         
+        # Check if user should have admin privileges
+        is_admin = is_admin_user(username)
+        
         conn = get_db()
         try:
             # Use parameterized query to prevent SQL injection
             cursor = conn.execute(
-                "INSERT INTO users (username, email, password_hash, pin_hash, totp_secret) VALUES (?, ?, ?, ?, ?)",
-                (username, email, password_hash, pin_hash, totp_secret)
+                "INSERT INTO users (username, email, password_hash, pin_hash, totp_secret, is_admin) VALUES (?, ?, ?, ?, ?, ?)",
+                (username, email, password_hash, pin_hash, totp_secret, is_admin)
             )
             conn.commit()
             
             # Get new user ID correctly using cursor.lastrowid
             user_id = cursor.lastrowid
-            add_audit_log(user_id, 'USER_REGISTERED', request.remote_addr or '127.0.0.1')
+            add_audit_log(user_id, 'USER_REGISTERED', request.remote_addr or '127.0.0.1', 
+                         f"Admin: {is_admin}")
             
         except sqlite3.IntegrityError as e:
             error_msg = str(e).lower()
@@ -203,6 +215,7 @@ def login():
                         # Login successful
                         session["user"] = username
                         session["user_id"] = user["id"]
+                        session["is_admin"] = bool(user.get("is_admin", False))
                         
                         # Reset failed attempts and update last login time
                         conn.execute(
@@ -211,7 +224,8 @@ def login():
                         )
                         conn.commit()
                         
-                        add_audit_log(user["id"], 'LOGIN_SUCCESS', request.remote_addr or '127.0.0.1')
+                        add_audit_log(user["id"], 'LOGIN_SUCCESS', request.remote_addr or '127.0.0.1',
+                                     f"Admin: {session['is_admin']}")
                         return redirect(url_for("dashboard"))
                 
                 # Login failed - increment failed attempts counter
@@ -239,7 +253,7 @@ def login():
 def dashboard():
     if "user" not in session:
         return redirect(url_for("login"))
-    return render_template("dashboard.html", username=session["user"])
+    return render_template("dashboard.html", username=session["user"], is_admin=session.get("is_admin", False))
 
 @app.route("/logout")
 def logout():
@@ -253,15 +267,23 @@ def logout():
 
 @app.route("/admin")
 def admin():
+    # First check if user is logged in
     if "user" not in session:
         flash("Please log in to access admin panel.")
         return redirect(url_for("login"))
     
+    # SECURITY CHECK: Only allow admin users to access this page
+    if not session.get("is_admin", False):
+        flash("Access denied. Admin privileges required.")
+        add_audit_log(session.get("user_id"), 'ADMIN_ACCESS_DENIED', 
+                     request.remote_addr or '127.0.0.1', f"User: {session['user']}")
+        return redirect(url_for("dashboard"))
+    
     conn = get_db()
     try:
-        # Get list of all users
+        # Get list of all users (only for admins)
         users = conn.execute(
-            "SELECT id, username, email, created_at, last_login, is_active, failed_login_attempts FROM users ORDER BY id"
+            "SELECT id, username, email, created_at, last_login, is_active, is_admin, failed_login_attempts FROM users ORDER BY id"
         ).fetchall()
         
         # Get audit logs (latest 50 entries)
@@ -272,6 +294,9 @@ def admin():
                ORDER BY al.timestamp DESC 
                LIMIT 50"""
         ).fetchall()
+        
+        add_audit_log(session.get("user_id"), 'ADMIN_ACCESS', 
+                     request.remote_addr or '127.0.0.1', "Admin panel accessed")
         
         return render_template("admin.html", users=users, audit_logs=audit_logs)
     except Exception as e:
