@@ -240,6 +240,7 @@ def login():
                 add_audit_log(None, 'LOGIN_FAILED', request.remote_addr or '127.0.0.1', f"Unknown user: {username}")
         
         except Exception as e:
+            print(f"Exception occurred during login: {e}")  # Print the actual exception
             flash("Login system error. Please try again.")
         finally:
             conn.close()
@@ -328,8 +329,8 @@ def debug_info():
             result["user_count"] = users[0]
             
             # 获取用户列表
-            user_list = conn.execute("SELECT username, email FROM users").fetchall()
-            result["users"] = [{"username": u[0], "email": u[1]} for u in user_list]
+            user_list = conn.execute("SELECT username, email, password_hash FROM users").fetchall()
+            result["users"] = [{"username": u[0], "email": u[1], "password_hash": u[2]} for u in user_list]
             
             conn.close()
         except Exception as e:
