@@ -211,7 +211,7 @@ def login():
                 if password_valid and pin_valid:
                     # Verify TOTP code
                     totp = pyotp.TOTP(user["totp_secret"])
-                    if totp.verify(totp_code)::
+                    if totp.verify(totp_code):
                         # Login successful
                         session["user"] = username
                         session["user_id"] = user["id"]
