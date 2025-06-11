@@ -10,7 +10,22 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "default_secret")
+import sqlite3
 
+@app.before_first_request
+def initialize_database():
+    conn = sqlite3.connect("users.db")
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            pin_hash TEXT NOT NULL,
+            totp_secret TEXT NOT NULL
+        )
+    ''')
+    conn.commit()
+    conn.close()
 DB_PATH = 'users.db'
 
 def get_db():
