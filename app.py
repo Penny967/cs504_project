@@ -10,11 +10,17 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "default_secret")
-import sqlite3
+
+DB_PATH = 'users.db'
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 @app.before_first_request
 def initialize_database():
-    conn = sqlite3.connect("users.db")
+    conn = sqlite3.connect(DB_PATH)
     conn.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,12 +32,6 @@ def initialize_database():
     ''')
     conn.commit()
     conn.close()
-DB_PATH = 'users.db'
-
-def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
 
 @app.route("/")
 def index():
@@ -57,7 +57,7 @@ def register():
             flash("Username already exists.")
             return redirect(url_for("register"))
 
-        uri = pyotp.totp.TOTP(totp_secret).provisioning_uri(name=username, issuer_name="MFA-Demo")
+        uri = pyotp.TOTP(totp_secret).provisioning_uri(name=username, issuer_name="MFA-Demo")
         img = qrcode.make(uri)
         buf = io.BytesIO()
         img.save(buf)
