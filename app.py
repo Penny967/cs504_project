@@ -314,6 +314,29 @@ def not_found(error):
 def internal_error(error):
     return "Internal server error. Please try again later.", 500
 
+@app.route("/debug")
+def debug_info():
+    import os
+    import sqlite3
+    
+    result = {"database_exists": os.path.exists('users.db')}
+    
+    if os.path.exists('users.db'):
+        try:
+            conn = sqlite3.connect('users.db')
+            users = conn.execute("SELECT COUNT(*) FROM users").fetchone()
+            result["user_count"] = users[0]
+            
+            # 获取用户列表
+            user_list = conn.execute("SELECT username, email FROM users").fetchall()
+            result["users"] = [{"username": u[0], "email": u[1]} for u in user_list]
+            
+            conn.close()
+        except Exception as e:
+            result["error"] = str(e)
+    
+    return result
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     debug_mode = os.environ.get("FLASK_ENV") == "development"
