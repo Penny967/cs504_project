@@ -215,7 +215,7 @@ def login():
                         # Login successful
                         session["user"] = username
                         session["user_id"] = user["id"]
-                        session["is_admin"] = bool(user.get("is_admin", False))
+                        session["is_admin"] = user["is_admin"]
                         
                         # Reset failed attempts and update last login time
                         conn.execute(
