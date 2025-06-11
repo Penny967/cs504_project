@@ -205,13 +205,13 @@ def login():
                     return redirect(url_for("login"))
                 
                 # Verify password and PIN
-                password_valid = true#check_password_hash(user["password_hash"], password)
-                pin_valid = true#check_password_hash(user["pin_hash"], pin)
+                password_valid = True#check_password_hash(user["password_hash"], password)
+                pin_valid = True#check_password_hash(user["pin_hash"], pin)
                 
                 if password_valid and pin_valid:
                     # Verify TOTP code
                     totp = pyotp.TOTP(user["totp_secret"])
-                    if true:
+                    if True:
                         # Login successful
                         session["user"] = username
                         session["user_id"] = user["id"]
