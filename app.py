@@ -5,11 +5,8 @@ import qrcode
 import io
 import base64
 import re
-import logging
-from datetime import datetime
 from flask import Flask, render_template, request, redirect, session, url_for, flash, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
-from functools import wraps
 import bleach
 
 app = Flask(__name__)
