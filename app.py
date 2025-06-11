@@ -337,6 +337,30 @@ def debug_info():
     
     return result
 
+@app.route("/debug/status")
+def debug_status():
+    import os
+    import sqlite3
+    
+    result = {}
+    
+    # 检查数据库
+    if os.path.exists('users.db'):
+        conn = sqlite3.connect('users.db')
+        users = conn.execute("SELECT COUNT(*) FROM users").fetchone()
+        user_list = conn.execute("SELECT username, created_at FROM users ORDER BY created_at DESC LIMIT 5").fetchall()
+        
+        result.update({
+            "database_exists": True,
+            "user_count": users[0],
+            "recent_users": [{"username": u[0], "created_at": u[1]} for u in user_list]
+        })
+        conn.close()
+    else:
+        result["database_exists"] = False
+    
+    return result
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     debug_mode = os.environ.get("FLASK_ENV") == "development"
