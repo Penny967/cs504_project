@@ -362,6 +362,172 @@ def debug_status():
     
     return result
 
+# 将这些路由添加到 app.py 中
+
+@app.route("/api/users", methods=["GET"])
+def api_get_users():
+    """RESTful API: Get all users"""
+    if "user" not in session:
+        return jsonify({"success": False, "error": "Authentication required"}), 401
+    
+    conn = get_db()
+    try:
+        users = conn.execute(
+            "SELECT id, username, email, created_at, last_login, is_active, is_admin FROM users ORDER BY id"
+        ).fetchall()
+        
+        users_list = []
+        for user in users:
+            users_list.append({
+                "id": user["id"],
+                "username": user["username"], 
+                "email": user["email"],
+                "created_at": user["created_at"],
+                "last_login": user["last_login"],
+                "is_active": bool(user["is_active"]),
+                "is_admin": bool(user["is_admin"])
+            })
+        
+        return jsonify({
+            "success": True,
+            "data": users_list,
+            "count": len(users_list)
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route("/api/users/<int:user_id>", methods=["GET"])
+def api_get_user(user_id):
+    """RESTful API: Get specific user by ID"""
+    if "user" not in session:
+        return jsonify({"success": False, "error": "Authentication required"}), 401
+    
+    conn = get_db()
+    try:
+        user = conn.execute(
+            "SELECT id, username, email, created_at, last_login, is_active, is_admin FROM users WHERE id = ?",
+            (user_id,)
+        ).fetchone()
+        
+        if not user:
+            return jsonify({"success": False, "error": "User not found"}), 404
+        
+        return jsonify({
+            "success": True,
+            "data": {
+                "id": user["id"],
+                "username": user["username"],
+                "email": user["email"], 
+                "created_at": user["created_at"],
+                "last_login": user["last_login"],
+                "is_active": bool(user["is_active"]),
+                "is_admin": bool(user["is_admin"])
+            }
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route("/api/users/<int:user_id>", methods=["PUT"])
+def api_update_user(user_id):
+    """RESTful API: Update user information"""
+    if "user" not in session:
+        return jsonify({"success": False, "error": "Authentication required"}), 401
+    
+    if not session.get("is_admin", False):
+        return jsonify({"success": False, "error": "Admin privileges required"}), 403
+    
+    data = request.get_json()
+    if not data:
+        return jsonify({"success": False, "error": "No data provided"}), 400
+    
+    conn = get_db()
+    try:
+        # Check if user exists
+        user = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user:
+            return jsonify({"success": False, "error": "User not found"}), 404
+        
+        # Validate email if provided
+        if "email" in data and not validate_email(data["email"]):
+            return jsonify({"success": False, "error": "Invalid email format"}), 400
+        
+        # Build update query dynamically
+        update_fields = []
+        update_values = []
+        
+        if "username" in data:
+            update_fields.append("username = ?")
+            update_values.append(clean_input(data["username"]))
+        
+        if "email" in data:
+            update_fields.append("email = ?")
+            update_values.append(clean_input(data["email"]))
+        
+        if "is_active" in data:
+            update_fields.append("is_active = ?")
+            update_values.append(bool(data["is_active"]))
+        
+        if update_fields:
+            update_values.append(user_id)
+            query = f"UPDATE users SET {', '.join(update_fields)} WHERE id = ?"
+            conn.execute(query, update_values)
+            conn.commit()
+            
+            add_audit_log(session.get("user_id"), 'USER_UPDATED', 
+                         request.remote_addr or '127.0.0.1', f"Updated user ID: {user_id}")
+        
+        return jsonify({"success": True, "message": "User updated successfully"})
+    
+    except sqlite3.IntegrityError as e:
+        if 'username' in str(e):
+            return jsonify({"success": False, "error": "Username already exists"}), 400
+        elif 'email' in str(e):
+            return jsonify({"success": False, "error": "Email already exists"}), 400
+        else:
+            return jsonify({"success": False, "error": "Database constraint violation"}), 400
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route("/api/users/<int:user_id>", methods=["DELETE"])
+def api_delete_user(user_id):
+    """RESTful API: Delete user"""
+    if "user" not in session:
+        return jsonify({"success": False, "error": "Authentication required"}), 401
+    
+    if not session.get("is_admin", False):
+        return jsonify({"success": False, "error": "Admin privileges required"}), 403
+    
+    conn = get_db()
+    try:
+        # Check if user exists
+        user = conn.execute("SELECT username FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user:
+            return jsonify({"success": False, "error": "User not found"}), 404
+        
+        # Prevent self-deletion
+        if user_id == session.get("user_id"):
+            return jsonify({"success": False, "error": "Cannot delete your own account"}), 400
+        
+        # Delete user
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        conn.commit()
+        
+        add_audit_log(session.get("user_id"), 'USER_DELETED', 
+                     request.remote_addr or '127.0.0.1', f"Deleted user: {user['username']}")
+        
+        return jsonify({"success": True, "message": "User deleted successfully"})
+    
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        conn.close()
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     debug_mode = os.environ.get("FLASK_ENV") == "development"
