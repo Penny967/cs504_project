@@ -13,7 +13,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "your-secret-key-here")
 DB_PATH = 'users.db'
 
 # Admin configuration - these usernames will have admin access
-ADMIN_USERS = ['admin', 'penny', 'administrator', 'root']
+ADMIN_USERS = ['admin', 'penny', 'administrator', 'root']  # Add your admin usernames here
 
 # Email validation regex pattern
 EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
@@ -92,18 +92,12 @@ def add_audit_log(user_id, action, ip_address, details=None):
 # Initialize database on startup
 initialize_database()
 
-# =============================================================================
-# Web Routes
-# =============================================================================
-
 @app.route("/")
 def index():
-    """Redirect to login page"""
     return redirect(url_for("login"))
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
-    """User registration with MFA setup"""
     if request.method == "POST":
         username = clean_input(request.form.get("username"))
         email = clean_input(request.form.get("email"))
@@ -180,4 +174,369 @@ def register():
             flash(f"Registration successful! Please set up TOTP manually. Secret: {totp_secret}")
             return redirect(url_for("login"))
     
-    return re
+    return render_template("register.html")
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = clean_input(request.form.get("username"))
+        password = request.form.get("password")
+        pin = request.form.get("pin")
+        totp_code = request.form.get("totp")
+        
+        # Validate all required fields are provided
+        if not all([username, password, pin, totp_code]):
+            flash("All fields are required.")
+            return redirect(url_for("login"))
+        
+        conn = get_db()
+        try:
+            # Use parameterized query to prevent SQL injection
+            user = conn.execute(
+                "SELECT * FROM users WHERE username = ? AND is_active = 1",
+                (username,)
+            ).fetchone()
+            
+            if user:
+                # Check if account is locked due to failed attempts
+                if user["failed_login_attempts"] >= 5:
+                    flash("Account temporarily locked due to too many failed attempts.")
+                    add_audit_log(user["id"], 'LOGIN_BLOCKED', request.remote_addr or '127.0.0.1', "Account locked")
+                    return redirect(url_for("login"))
+                
+                # Verify password and PIN
+                password_valid = check_password_hash(user["password_hash"], password)
+                pin_valid = check_password_hash(user["pin_hash"], pin)
+                
+                if password_valid and pin_valid:
+                    # Verify TOTP code
+                    totp = pyotp.TOTP(user["totp_secret"])
+                    if totp.verify(totp_code):
+                        # Login successful
+                        session["user"] = username
+                        session["user_id"] = user["id"]
+                        session["is_admin"] = user["is_admin"]
+                        
+                        # Reset failed attempts and update last login time
+                        conn.execute(
+                            "UPDATE users SET failed_login_attempts = 0, last_login = CURRENT_TIMESTAMP WHERE id = ?",
+                            (user["id"],)
+                        )
+                        conn.commit()
+                        
+                        add_audit_log(user["id"], 'LOGIN_SUCCESS', request.remote_addr or '127.0.0.1',
+                                     f"Admin: {session['is_admin']}")
+                        return redirect(url_for("dashboard"))
+                
+                # Login failed - increment failed attempts counter
+                conn.execute(
+                    "UPDATE users SET failed_login_attempts = failed_login_attempts + 1 WHERE id = ?",
+                    (user["id"],)
+                )
+                conn.commit()
+                add_audit_log(user["id"], 'LOGIN_FAILED', request.remote_addr or '127.0.0.1')
+            else:
+                # Unknown user attempted login
+                add_audit_log(None, 'LOGIN_FAILED', request.remote_addr or '127.0.0.1', f"Unknown user: {username}")
+        
+        except Exception as e:
+            print(f"Exception occurred during login: {e}")  # Print the actual exception
+            flash("Login system error. Please try again.")
+        finally:
+            conn.close()
+        
+        flash("Invalid credentials. Please try again.")
+        return redirect(url_for("login"))
+    
+    return render_template("login.html")
+
+@app.route("/dashboard")
+def dashboard():
+    if "user" not in session:
+        return redirect(url_for("login"))
+    return render_template("dashboard.html", username=session["user"], is_admin=session.get("is_admin", False))
+
+@app.route("/logout")
+def logout():
+    user_id = session.get("user_id")
+    if user_id:
+        add_audit_log(user_id, 'LOGOUT', request.remote_addr or '127.0.0.1')
+    
+    session.clear()
+    flash("You have been logged out.")
+    return redirect(url_for("login"))
+
+@app.route("/admin")
+def admin():
+    # First check if user is logged in
+    if "user" not in session:
+        flash("Please log in to access admin panel.")
+        return redirect(url_for("login"))
+    
+    # SECURITY CHECK: Only allow admin users to access this page
+    if not session.get("is_admin", False):
+        flash("Access denied. Admin privileges required.")
+        add_audit_log(session.get("user_id"), 'ADMIN_ACCESS_DENIED', 
+                     request.remote_addr or '127.0.0.1', f"User: {session['user']}")
+        return redirect(url_for("dashboard"))
+    
+    conn = get_db()
+    try:
+        # Get list of all users (only for admins)
+        users = conn.execute(
+            "SELECT id, username, email, created_at, last_login, is_active, is_admin, failed_login_attempts FROM users ORDER BY id"
+        ).fetchall()
+        
+        # Get audit logs (latest 50 entries)
+        audit_logs = conn.execute(
+            """SELECT al.*, u.username 
+               FROM audit_log al 
+               LEFT JOIN users u ON al.user_id = u.id 
+               ORDER BY al.timestamp DESC 
+               LIMIT 50"""
+        ).fetchall()
+        
+        add_audit_log(session.get("user_id"), 'ADMIN_ACCESS', 
+                     request.remote_addr or '127.0.0.1', "Admin panel accessed")
+        
+        return render_template("admin.html", users=users, audit_logs=audit_logs)
+    except Exception as e:
+        flash("Error loading admin data.")
+        return redirect(url_for("dashboard"))
+    finally:
+        conn.close()
+
+# Error handlers
+@app.errorhandler(404)
+def not_found(error):
+    return redirect(url_for("login"))
+
+@app.errorhandler(500)
+def internal_error(error):
+    return "Internal server error. Please try again later.", 500
+
+@app.route("/debug")
+def debug_info():
+    import os
+    import sqlite3
+    
+    result = {"database_exists": os.path.exists('users.db')}
+    
+    if os.path.exists('users.db'):
+        try:
+            conn = sqlite3.connect('users.db')
+            users = conn.execute("SELECT COUNT(*) FROM users").fetchone()
+            result["user_count"] = users[0]
+            
+            # Get User List
+            user_list = conn.execute("SELECT username, email, password_hash FROM users").fetchall()
+            result["users"] = [{"username": u[0], "email": u[1], "password_hash": u[2]} for u in user_list]
+            
+            conn.close()
+        except Exception as e:
+            result["error"] = str(e)
+    
+    return result
+
+@app.route("/debug/status")
+def debug_status():
+    import os
+    import sqlite3
+    
+    result = {}
+    
+    # check database
+    if os.path.exists('users.db'):
+        conn = sqlite3.connect('users.db')
+        users = conn.execute("SELECT COUNT(*) FROM users").fetchone()
+        user_list = conn.execute("SELECT username, created_at FROM users ORDER BY created_at DESC LIMIT 5").fetchall()
+        
+        result.update({
+            "database_exists": True,
+            "user_count": users[0],
+            "recent_users": [{"username": u[0], "created_at": u[1]} for u in user_list]
+        })
+        conn.close()
+    else:
+        result["database_exists"] = False
+    
+    return result
+
+
+@app.route("/api/users", methods=["GET"])
+def api_get_users():
+    """RESTful API: Get all users"""
+    if "user" not in session:
+        return jsonify({"success": False, "error": "Authentication required"}), 401
+    
+    conn = get_db()
+    try:
+        users = conn.execute(
+            "SELECT id, username, email, created_at, last_login, is_active, is_admin, failed_login_attempts FROM users ORDER BY id"
+        ).fetchall()
+        
+        users_list = []
+        for user in users:
+            users_list.append({
+                "id": user["id"],
+                "username": user["username"], 
+                "email": user["email"],
+                "created_at": user["created_at"],
+                "last_login": user["last_login"],
+                "is_active": bool(user["is_active"]),
+                "is_admin": bool(user["is_admin"]),
+                "failed_login_attempts": user["failed_login_attempts"]
+            })
+        
+        return jsonify({
+            "success": True,
+            "data": users_list,
+            "count": len(users_list)
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route("/api/users/<int:user_id>", methods=["GET"])
+def api_get_user(user_id):
+    """RESTful API: Get specific user by ID"""
+    if "user" not in session:
+        return jsonify({"success": False, "error": "Authentication required"}), 401
+    
+    conn = get_db()
+    try:
+        user = conn.execute(
+            "SELECT id, username, email, created_at, last_login, is_active, is_admin, failed_login_attempts FROM users WHERE id = ?",
+            (user_id,)
+        ).fetchone()
+        
+        if not user:
+            return jsonify({"success": False, "error": "User not found"}), 404
+        
+        return jsonify({
+            "success": True,
+            "data": {
+                "id": user["id"],
+                "username": user["username"],
+                "email": user["email"], 
+                "created_at": user["created_at"],
+                "last_login": user["last_login"],
+                "is_active": bool(user["is_active"]),
+                "is_admin": bool(user["is_admin"]),
+                "failed_login_attempts": user["failed_login_attempts"]
+            }
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route("/api/users/<int:user_id>", methods=["PUT"])
+def api_update_user(user_id):
+    """RESTful API: Update user information"""
+    if "user" not in session:
+        return jsonify({"success": False, "error": "Authentication required"}), 401
+    
+    # only admin can revise data
+    if not session.get("is_admin", False):
+        return jsonify({"success": False, "error": "Admin privileges required"}), 403
+    
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"success": False, "error": "No data provided"}), 400
+    except Exception:
+        return jsonify({"success": False, "error": "Invalid JSON format"}), 400
+    
+    conn = get_db()
+    try:
+        # check if user exist
+        user = conn.execute("SELECT id, username FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user:
+            return jsonify({"success": False, "error": "User not found"}), 404
+        
+        # verify email format
+        if "email" in data and not validate_email(data["email"]):
+            return jsonify({"success": False, "error": "Invalid email format"}), 400
+        
+        update_fields = []
+        update_values = []
+        
+        if "username" in data:
+            update_fields.append("username = ?")
+            update_values.append(clean_input(data["username"]))
+        
+        if "email" in data:
+            update_fields.append("email = ?")
+            update_values.append(clean_input(data["email"]))
+        
+        if "is_active" in data:
+            update_fields.append("is_active = ?")
+            update_values.append(bool(data["is_active"]))
+        
+        if "is_admin" in data:
+            update_fields.append("is_admin = ?")
+            update_values.append(bool(data["is_admin"]))
+        
+        if update_fields:
+            update_values.append(user_id)
+            query = f"UPDATE users SET {', '.join(update_fields)} WHERE id = ?"
+            conn.execute(query, update_values)
+            conn.commit()
+            
+            # record
+            add_audit_log(session.get("user_id"), 'USER_UPDATED', 
+                         request.remote_addr or '127.0.0.1', f"Updated user ID: {user_id}")
+        
+        return jsonify({"success": True, "message": "User updated successfully"})
+    
+    except sqlite3.IntegrityError as e:
+        error_msg = str(e).lower()
+        if 'username' in error_msg:
+            return jsonify({"success": False, "error": "Username already exists"}), 400
+        elif 'email' in error_msg:
+            return jsonify({"success": False, "error": "Email already exists"}), 400
+        else:
+            return jsonify({"success": False, "error": "Database constraint violation"}), 400
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route("/api/users/<int:user_id>", methods=["DELETE"])
+def api_delete_user(user_id):
+    """RESTful API: Delete user"""
+    if "user" not in session:
+        return jsonify({"success": False, "error": "Authentication required"}), 401
+    
+    # only admin can delete data
+    if not session.get("is_admin", False):
+        return jsonify({"success": False, "error": "Admin privileges required"}), 403
+    
+    conn = get_db()
+    try:
+        user = conn.execute("SELECT username FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user:
+            return jsonify({"success": False, "error": "User not found"}), 404
+        
+        if user_id == session.get("user_id"):
+            return jsonify({"success": False, "error": "Cannot delete your own account"}), 400
+        
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        conn.commit()
+        
+        add_audit_log(session.get("user_id"), 'USER_DELETED', 
+                     request.remote_addr or '127.0.0.1', f"Deleted user: {user['username']}")
+        
+        return jsonify({"success": True, "message": "User deleted successfully"})
+    
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        conn.close()
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    debug_mode = os.environ.get("FLASK_ENV") == "development"
+    app.run(host="0.0.0.0", port=port, debug=debug_mode)
